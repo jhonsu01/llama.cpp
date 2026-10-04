@@ -2928,6 +2928,14 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
 // interface implementation
 //
 
+const char * llama_model::moe_hot_profile() const {
+    return params.moe_hot_profile;
+}
+
+int32_t llama_model::moe_hot_mib() const {
+    return params.moe_hot_mib;
+}
+
 int32_t llama_model::moe_lru_slots() const {
     return params.moe_lru_slots;
 }
@@ -2953,6 +2961,8 @@ llama_model_params llama_model_default_params() {
         /*.main_gpu                    =*/ 0,
         /*.tensor_split                =*/ nullptr,
         /*.moe_lru_slots               =*/ 0,
+        /*.moe_hot_profile             =*/ nullptr,
+        /*.moe_hot_mib                 =*/ 0,
         /*.progress_callback           =*/ nullptr,
         /*.progress_callback_user_data =*/ nullptr,
         /*.kv_overrides                =*/ nullptr,

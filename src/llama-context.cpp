@@ -471,6 +471,21 @@ llama_context::llama_context(
             lru = model.create_moe_lru(lru_backends);
         }
 
+        if (!lru && model.moe_hot_profile() && model.moe_hot_mib() > 0) {
+            std::vector<ggml_backend_t> hot_backends;
+            for (const auto & b : backends) {
+                ggml_backend_dev_t d = ggml_backend_get_device(b.get());
+                if (d && ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_GPU) {
+                    hot_backends.push_back(b.get());
+                }
+            }
+            try {
+                hot = std::make_unique<llama_moe_hot>(model, hot_backends, model.moe_hot_profile(), model.moe_hot_mib());
+            } catch (const std::exception & e) {
+                LLAMA_LOG_WARN("%s, running without hot experts\n", e.what());
+            }
+        }
+
         sched_reserve();
 
         if (!cparams.flash_attn) {
@@ -494,6 +509,9 @@ llama_context::llama_context(
 llama_context::~llama_context() {
     if (lru) {
         lru->log_final_stats();
+    }
+    if (hot) {
+        hot->log_final_stats();
     }
 
     // wait for any pending asynchronous copies into the output buffers before they are freed
@@ -2467,6 +2485,9 @@ uint32_t llama_context::graph_max_nodes(uint32_t n_tokens) const {
     if (lru) {
         res += lru->n_pooled() * llama_moe_lru::NODES_PER_LAYER;
     }
+    if (hot) {
+        res += hot->n_layers() * llama_moe_hot::NODES_PER_LAYER;
+    }
     return res;
 }
 
@@ -2616,6 +2637,7 @@ llm_graph_params llama_context::graph_params(
         /*.cross       =*/ &cross,
         /*.prec_policy =*/ &model.prec_policy,
         /*.lru         =*/ lru.get(),
+        /*.hot         =*/ hot.get(),
         /*.samplers    =*/ sampling.samplers,
         /*.n_outputs   =*/ n_outputs,
         /*.cb          =*/ graph_get_cb(),

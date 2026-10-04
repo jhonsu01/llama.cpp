@@ -338,6 +338,10 @@ extern "C" {
         // MoE expert LRU pool slots per pooled layer (0 = disabled)
         int32_t moe_lru_slots;
 
+        // pinned hot MoE experts: a ranked (layer, expert) profile and the VRAM budget for its top pairs
+        const char * moe_hot_profile;
+        int32_t      moe_hot_mib;
+
         // Called with a progress value between 0.0 and 1.0. Pass NULL to disable.
         // If the provided progress_callback returns true, model loading continues.
         // If it returns false, model loading is immediately aborted.

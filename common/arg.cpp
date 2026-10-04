@@ -2786,6 +2786,25 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_MOE_LRU_SLOTS"));
     add_opt(common_arg(
+        {"--moe-hot-profile"}, "FNAME",
+        "ranked (layer, expert) profile (Strata STRP format) for pinned hot MoE experts:\n"
+        "its top pairs are copied once to VRAM; routed hits run on the GPU, misses on the CPU\n"
+        "(layers whose expert weights are on the host, e.g. --n-cpu-moe); needs --moe-hot-mib",
+        [](common_params & params, const std::string & value) {
+            params.moe_hot_profile = value;
+        }
+    ).set_env("LLAMA_ARG_MOE_HOT_PROFILE"));
+    add_opt(common_arg(
+        {"--moe-hot-mib"}, "N",
+        "VRAM in MiB for the pinned hot experts of --moe-hot-profile",
+        [](common_params & params, int value) {
+            if (value <= 0) {
+                throw std::invalid_argument("invalid value");
+            }
+            params.moe_hot_mib = value;
+        }
+    ).set_env("LLAMA_ARG_MOE_HOT_MIB"));
+    add_opt(common_arg(
         {"-ncffn", "--n-cpu-ffn"}, "N",
         "keep the dense FFN weights of the first N layers in the CPU\n"
         "(dense models; for MoE expert weights use --n-cpu-moe)",

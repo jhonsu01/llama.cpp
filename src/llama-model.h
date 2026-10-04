@@ -769,6 +769,8 @@ struct llama_model {
     uint32_t n_gpu_layers() const;
     llama_split_mode split_mode() const;
     int32_t moe_lru_slots() const;
+    const char * moe_hot_profile() const;
+    int32_t moe_hot_mib() const;
     std::unique_ptr<llama_moe_lru> create_moe_lru(const std::vector<ggml_backend_t> & gpu_backends) const;
 
     std::map<ggml_backend_buffer_type_t, size_t> memory_breakdown() const;

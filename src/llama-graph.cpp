@@ -6,6 +6,7 @@
 #include "llama-cparams.h"
 #include "llama-sampler.h"
 #include "llama-moe-lru.h"
+#include "llama-moe-hot.h"
 
 #include "llama-kv-cache.h"
 #include "llama-kv-cache-iswa.h"
@@ -1495,6 +1496,7 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     samplers         (params.samplers),
     cb_func          (params.cb),
     lru              (params.lru),
+    hot              (params.hot),
     res              (params.res),
     ctx0             (res->get_ctx()),
     gf               (res->get_gf()) {
@@ -2195,6 +2197,51 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         gate_exps = upd[llama_moe_lru::KIND_GATE];
         down_exps = upd[llama_moe_lru::KIND_DOWN];
         selected_experts = slot;
+    }
+
+    // pinned hot experts (--moe-hot-profile): every routed expert runs where it lives - the hot copy in VRAM or
+    // the host weights - and the two weighted sums are added.  CPU side: hits keep their slot with weight 0 and an
+    // id the token already reads, so the CPU reads only the misses.  GPU side: its own width m, the hits plus
+    // unused hot slots (weight 0), distinct per token as CUDA's mul_mat_id needs.  Decode-sized batches only.
+    if (hot != nullptr && hot->has(il) && !cparams.warmup && n_tokens > 0 &&
+        n_tokens <= llama_moe_hot::MAX_TOKENS && !weight_before_ffn &&
+        (lru == nullptr || !lru->pooled(il)) && gate_exps != nullptr && gate_up_exps == nullptr &&
+        up_exps_b == nullptr && gate_exps_b == nullptr && down_exps_b == nullptr && gate_up_exps_b == nullptr &&
+        up_exps_s == nullptr && gate_exps_s == nullptr && down_exps_s == nullptr &&
+        (type_op == LLM_FFN_SILU || type_op == LLM_FFN_GELU) &&
+        !(type_op == LLM_FFN_SILU && il >= 0 && hparams.swiglu_clamp_exp[il] > 1e-6f)) {
+        ggml_tensor * ids_cpu = hot->build_ids_cpu(ctx0, selected_experts, il);
+        ggml_tensor * hit     = ggml_cast(ctx0, hot->build_hit(ctx0, selected_experts, il), GGML_TYPE_F32);
+        hit = ggml_reshape_3d(ctx0, hit, 1, n_expert_used, n_tokens);
+        cb(hit, "ffn_moe_hot_hit", il);
+        ggml_tensor * w_cpu   = ggml_sub(ctx0, weights, ggml_mul(ctx0, weights, hit));   // [1, n_expert_used, n_tokens]
+
+        ggml_tensor * ids_gpu = hot->build_ids_gpu(ctx0, selected_experts, il);           // [m, n_tokens]
+        ggml_tensor * w_gpu   = hot->build_w_gpu(ctx0, selected_experts, weights, il);    // [1, m, n_tokens]
+
+        ggml_tensor * x = ggml_reshape_3d(ctx0, cur, n_embd, 1, n_tokens);
+
+        auto part = [&](ggml_tensor * up_w, ggml_tensor * gate_w, ggml_tensor * down_w, ggml_tensor * ids,
+                        ggml_tensor * w, const char * name) {
+            const int64_t n_slot = ids->ne[0];
+            ggml_tensor * u = ggml_mul_mat_id(ctx0, up_w, x, ids);    // [n_ff, n_slot, n_tokens]
+            ggml_tensor * g = ggml_mul_mat_id(ctx0, gate_w, x, ids);
+            ggml_tensor * a = type_op == LLM_FFN_SILU ? ggml_swiglu_split(ctx0, g, u) : ggml_geglu_split(ctx0, g, u);
+            ggml_tensor * e = ggml_mul_mat_id(ctx0, down_w, a, ids);  // [n_embd, n_slot, n_tokens]
+            e = ggml_mul(ctx0, e, w);
+            cb(e, name, il);
+            ggml_tensor * s = ggml_view_2d(ctx0, e, n_embd, n_tokens, e->nb[2], 0);
+            for (int64_t i = 1; i < n_slot; i++) {
+                s = ggml_add(ctx0, s, ggml_view_2d(ctx0, e, n_embd, n_tokens, e->nb[2], i * e->nb[1]));
+            }
+            return n_slot == 1 ? ggml_cont(ctx0, s) : s;
+        };
+        ggml_tensor * out_cpu = part(up_exps, gate_exps, down_exps, ids_cpu, w_cpu, "ffn_moe_hot_cold");
+        ggml_tensor * out_gpu = part(hot->hot_get(il, llama_moe_hot::KIND_UP), hot->hot_get(il, llama_moe_hot::KIND_GATE),
+                                     hot->hot_get(il, llama_moe_hot::KIND_DOWN), ids_gpu, w_gpu, "ffn_moe_hot_gpu");
+        ggml_tensor * moe_out = ggml_add(ctx0, out_cpu, out_gpu);
+        cb(moe_out, "ffn_moe_out", il);
+        return moe_out;
     }
 
     cur = ggml_reshape_3d(ctx0, cur, n_embd, 1, n_tokens);

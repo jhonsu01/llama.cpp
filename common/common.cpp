@@ -1605,6 +1605,8 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
 
     mparams.n_gpu_layers    = params.n_gpu_layers;
     mparams.moe_lru_slots   = params.moe_lru_slots;
+    mparams.moe_hot_profile = params.moe_hot_profile.empty() ? nullptr : params.moe_hot_profile.c_str();
+    mparams.moe_hot_mib     = params.moe_hot_mib;
     mparams.main_gpu        = params.main_gpu;
     mparams.split_mode      = params.split_mode;
     mparams.load_mode       = params.load_mode;

@@ -477,6 +477,8 @@ struct common_params {
 
     int32_t n_gpu_layers       = -1;    // number of layers to store in VRAM, -1 is auto, <= -2 is all
     int32_t moe_lru_slots      = 0;     // MoE expert LRU pool slots per pooled layer (0 = disabled)
+    std::string moe_hot_profile;        // ranked (layer, expert) profile for pinned hot experts
+    int32_t moe_hot_mib        = 0;     // VRAM budget for the pinned hot experts (0 = disabled)
     int32_t main_gpu           = 0;     // the GPU that is used for scratch and small tensors
     float   tensor_split[128]  = {0};   // how split tensors should be distributed across GPUs
     bool    fit_params         = true;  // whether to fit unset model/context parameters to free device memory
